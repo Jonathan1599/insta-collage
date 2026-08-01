@@ -34,6 +34,7 @@ interface ProjectStore {
     frameId: string,
     geometry: Partial<Pick<CollageFrame, 'x' | 'y' | 'width' | 'height'>>,
   ) => void
+  swapFrameGeometry: (firstFrameId: string, secondFrameId: string) => void
   assignImages: (assignments: Array<{ frameId: string; sourcePath: string }>) => void
   chooseImage: (frameId: string, sourcePath: string) => void
   setLoadedImage: (
@@ -159,6 +160,48 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       },
       editor: { ...state.editor, dirty: true },
     })),
+  swapFrameGeometry: (firstFrameId, secondFrameId) =>
+    set((state) => {
+      const activePage = state.project.pages.find(
+        (page) => page.id === state.project.activePageId,
+      )
+      const firstFrame = activePage?.frames.find((frame) => frame.id === firstFrameId)
+      const secondFrame = activePage?.frames.find((frame) => frame.id === secondFrameId)
+      if (!firstFrame || !secondFrame) return state
+
+      const firstGeometry = {
+        x: firstFrame.x,
+        y: firstFrame.y,
+        width: firstFrame.width,
+        height: firstFrame.height,
+      }
+      const secondGeometry = {
+        x: secondFrame.x,
+        y: secondFrame.y,
+        width: secondFrame.width,
+        height: secondFrame.height,
+      }
+
+      return {
+        project: {
+          ...state.project,
+          updatedAt: new Date().toISOString(),
+          pages: state.project.pages.map((page) => (
+            page.id === state.project.activePageId
+              ? {
+                  ...page,
+                  frames: page.frames.map((frame) => {
+                    if (frame.id === firstFrameId) return { ...frame, ...secondGeometry }
+                    if (frame.id === secondFrameId) return { ...frame, ...firstGeometry }
+                    return frame
+                  }),
+                }
+              : page
+          )),
+        },
+        editor: { ...state.editor, dirty: true },
+      }
+    }),
   assignImages: (assignments) =>
     set((state) => {
       const pathsByFrame = new Map(assignments.map(({ frameId, sourcePath }) => [frameId, sourcePath]))

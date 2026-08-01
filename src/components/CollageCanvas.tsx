@@ -94,8 +94,44 @@ const activePageFromState = () => {
 const frameFromPage = (page: ProjectPage, frameId: string) =>
   page.frames.find((frame) => frame.id === frameId)
 
+type FrameGeometry = Pick<CollageFrame, 'x' | 'y' | 'width' | 'height'>
+
+const findSwapTarget = (
+  movingFrameId: string,
+  moving: FrameGeometry,
+  frames: CollageFrame[],
+) => {
+  const movingArea = moving.width * moving.height
+  const centerX = moving.x + moving.width / 2
+  const centerY = moving.y + moving.height / 2
+
+  return frames
+    .filter((frame) => frame.id !== movingFrameId)
+    .map((frame) => {
+      const intersectionWidth = Math.max(
+        0,
+        Math.min(moving.x + moving.width, frame.x + frame.width) - Math.max(moving.x, frame.x),
+      )
+      const intersectionHeight = Math.max(
+        0,
+        Math.min(moving.y + moving.height, frame.y + frame.height) - Math.max(moving.y, frame.y),
+      )
+      const overlap = intersectionWidth * intersectionHeight
+        / Math.min(movingArea, frame.width * frame.height)
+      const containsCenter = centerX >= frame.x
+        && centerX <= frame.x + frame.width
+        && centerY >= frame.y
+        && centerY <= frame.y + frame.height
+      return { frame, score: containsCenter ? overlap : 0 }
+    })
+    .filter(({ score }) => score >= 0.25)
+    .sort((left, right) => right.score - left.score)[0]?.frame ?? null
+}
+
 const SNAP_THRESHOLD = 18
 const MIN_FRAME_SIZE = 120
+const WHEEL_ZOOM_SENSITIVITY = 0.0015
+const MAX_WHEEL_ZOOM_DELTA = 30
 
 interface SnapCandidate {
   value: number
@@ -151,6 +187,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
     const loadedSourcesRef = useRef(new Map<string, string>())
     const loadTokensRef = useRef(new Map<string, number>())
     const directPanRef = useRef<{ frameId: string; x: number; y: number } | null>(null)
+    const pendingFrameSelectionRef = useRef<string | null>(null)
     const verticalGuideRef = useRef<Line | null>(null)
     const horizontalGuideRef = useRef<Line | null>(null)
     const [loadingFrameIds, setLoadingFrameIds] = useState<Set<string>>(new Set())
@@ -160,8 +197,10 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
     const editor = useProjectStore((state) => state.editor)
     const selectFrame = useProjectStore((state) => state.selectFrame)
     const setCropMode = useProjectStore((state) => state.setCropMode)
+    const setArrangeMode = useProjectStore((state) => state.setArrangeMode)
     const setLoadedImage = useProjectStore((state) => state.setLoadedImage)
     const updateFrameGeometry = useProjectStore((state) => state.updateFrameGeometry)
+    const swapFrameGeometry = useProjectStore((state) => state.swapFrameGeometry)
     const updateImageTransform = useProjectStore((state) => state.updateImageTransform)
 
     const page = project.pages.find((candidate) => candidate.id === project.activePageId)
@@ -281,7 +320,11 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         if (!frameId) return
         const state = useProjectStore.getState()
         if (state.editor.cropMode && state.editor.selectedFrameId !== frameId) setCropMode(false)
-        selectFrame(frameId)
+        if (state.editor.arrangeMode && state.editor.selectedFrameId !== frameId) {
+          pendingFrameSelectionRef.current = frameId
+        } else if (state.editor.selectedFrameId !== frameId) {
+          selectFrame(frameId)
+        }
         const currentFrame = frameFromPage(activePageFromState(), frameId)
         if (
           currentFrame?.image &&
@@ -336,18 +379,25 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
 
       canvas.on('mouse:up', () => {
         directPanRef.current = null
+        const pendingFrameId = pendingFrameSelectionRef.current
+        pendingFrameSelectionRef.current = null
+        if (pendingFrameId) selectFrame(pendingFrameId)
         hideSnapGuides()
         canvas.requestRenderAll()
       })
 
       canvas.on('mouse:dblclick', (event) => {
         const overlay = event.target instanceof Rect ? event.target : null
-        const frameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
+        const image = event.target instanceof FabricImage ? event.target : null
+        const frameId = overlay
+          ? frameIdsByObjectRef.current.get(overlay)
+          : image
+            ? imageIdsByObjectRef.current.get(image)
+            : undefined
         if (!frameId) return
-        if (useProjectStore.getState().editor.arrangeMode) return
-        const currentFrame = frameFromPage(activePageFromState(), frameId)
+        directPanRef.current = null
         selectFrame(frameId)
-        if (currentFrame?.image) setCropMode(true)
+        setArrangeMode(true)
       })
 
       canvas.on('object:moving', (event) => {
@@ -398,6 +448,17 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           overlay.set({ left: x, top: y })
           overlay.setCoords()
 
+          const clipPath = clipPathsRef.current.get(movingFrameId)
+          clipPath?.set({ left: x, top: y })
+          const image = imageObjectsRef.current.get(movingFrameId)
+          if (image && currentFrame.image) {
+            image.set({
+              left: x + width / 2 + currentFrame.image.transform.offsetX,
+              top: y + height / 2 + currentFrame.image.transform.offsetY,
+            })
+            image.setCoords()
+          }
+
           if (xSnap) {
             verticalGuide.set({
               x1: xSnap.guide,
@@ -416,8 +477,17 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
               visible: true,
             })
           } else horizontalGuide.set({ visible: false })
-          setSnapStatus([xSnap?.label, ySnap?.label].filter(Boolean).join(' · ') || null)
-          updateFrameGeometry(movingFrameId, { x, y })
+          const swapTarget = findSwapTarget(
+            movingFrameId,
+            { x, y, width, height },
+            currentPage.frames,
+          )
+          const swapTargetNumber = swapTarget
+            ? currentPage.frames.findIndex((frame) => frame.id === swapTarget.id) + 1
+            : 0
+          setSnapStatus(swapTarget
+            ? `Release to swap with Frame ${swapTargetNumber}`
+            : [xSnap?.label, ySnap?.label].filter(Boolean).join(' · ') || null)
           canvas.requestRenderAll()
           return
         }
@@ -462,13 +532,67 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         )
         const x = Math.min(Math.max(overlay.left ?? 0, 0), currentPage.width - width)
         const y = Math.min(Math.max(overlay.top ?? 0, 0), currentPage.height - height)
-        overlay.set({ left: x, top: y, width, height, scaleX: 1, scaleY: 1 })
+        overlay.set({ left: x, top: y })
         overlay.setCoords()
-        updateFrameGeometry(frameId, { x, y, width, height })
+
+        const currentFrame = frameFromPage(currentPage, frameId)
+        const clipPath = clipPathsRef.current.get(frameId)
+        clipPath?.set({ left: x, top: y, width, height })
+        const image = imageObjectsRef.current.get(frameId)
+        if (image && currentFrame?.image) {
+          const previewFrame = { ...currentFrame, x, y, width, height }
+          const safe = constrainImageTransform(
+            previewFrame,
+            currentFrame.image.naturalWidth,
+            currentFrame.image.naturalHeight,
+            currentFrame.image.transform,
+          )
+          image.set({
+            left: x + width / 2 + safe.offsetX,
+            top: y + height / 2 + safe.offsetY,
+            scaleX: safe.scale,
+            scaleY: safe.scale,
+          })
+          image.setCoords()
+        }
         canvas.requestRenderAll()
       })
 
-      canvas.on('object:modified', () => {
+      canvas.on('object:modified', (event) => {
+        const overlay = event.target instanceof Rect ? event.target : null
+        const frameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
+        if (overlay && frameId && useProjectStore.getState().editor.arrangeMode) {
+          const currentPage = activePageFromState()
+          const width = Math.min(
+            Math.max(overlay.width * (overlay.scaleX ?? 1), MIN_FRAME_SIZE),
+            currentPage.width,
+          )
+          const height = Math.min(
+            Math.max(overlay.height * (overlay.scaleY ?? 1), MIN_FRAME_SIZE),
+            currentPage.height,
+          )
+          const x = Math.min(Math.max(overlay.left ?? 0, 0), currentPage.width - width)
+          const y = Math.min(Math.max(overlay.top ?? 0, 0), currentPage.height - height)
+          const swapTarget = event.transform?.action === 'drag'
+            ? findSwapTarget(
+                frameId,
+                { x, y, width, height },
+                currentPage.frames,
+              )
+            : null
+          const finalGeometry = swapTarget
+            ? {
+                x: swapTarget.x,
+                y: swapTarget.y,
+                width: swapTarget.width,
+                height: swapTarget.height,
+              }
+            : { x, y, width, height }
+          overlay.set({ ...finalGeometry, scaleX: 1, scaleY: 1 })
+          overlay.setCoords()
+          if (swapTarget) swapFrameGeometry(frameId, swapTarget.id)
+          else updateFrameGeometry(frameId, finalGeometry)
+        }
         hideSnapGuides()
         canvas.requestRenderAll()
       })
@@ -500,7 +624,16 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           currentFrame.image.naturalHeight,
           currentFrame.image.transform.rotation,
         )
-        const factor = event.e.deltaY < 0 ? 1.08 : 0.92
+        const deltaMultiplier = event.e.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? 100
+            : 1
+        const wheelDelta = Math.max(
+          -MAX_WHEEL_ZOOM_DELTA,
+          Math.min(event.e.deltaY * deltaMultiplier, MAX_WHEEL_ZOOM_DELTA),
+        )
+        const factor = Math.exp(-wheelDelta * WHEEL_ZOOM_SENSITIVITY)
         const scale = Math.min(
           Math.max(currentFrame.image.transform.scale * factor, minScale),
           minScale * 8,
@@ -528,7 +661,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         canvasRef.current = null
         canvas.dispose()
       }
-    }, [selectFrame, setCropMode, updateFrameGeometry, updateImageTransform])
+    }, [selectFrame, setArrangeMode, setCropMode, swapFrameGeometry, updateFrameGeometry, updateImageTransform])
 
     useEffect(() => {
       const canvas = canvasRef.current
@@ -584,6 +717,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           lockMovementX: !isArranging,
           lockMovementY: !isArranging,
           lockRotation: true,
+          lockScalingFlip: true,
           visible: true,
           hoverCursor: isArranging ? 'move' : frame.image ? 'grab' : 'pointer',
           moveCursor: isArranging ? 'move' : frame.image ? 'grabbing' : 'pointer',

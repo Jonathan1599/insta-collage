@@ -14,7 +14,7 @@ Photos are read from their existing local paths. The app never modifies the sour
 - Custom frames that can be moved and resized without disabling the starting layout's gap control
 - Smart snapping to the canvas center, margins, and other frame edges or centers
 - Separate Fabric.js frame, clip path, transform, and filter state for every photo
-- Click-to-select and double-click crop mode with drag-to-reposition
+- Click-to-select, double-click-to-arrange frames, and explicit photo crop mode
 - Mouse-wheel and slider zoom
 - Rotation with automatic cover constraints (no exposed frame areas)
 - Brightness, contrast, and saturation adjustments
@@ -60,7 +60,7 @@ npm run tauri build
 3. Click **Add multiple photos** and choose images. A grid automatically expands from 4 to 6 or 8 frames when needed.
 4. Click **Add custom frame** or **+ Frame** to add a centered frame without discarding the existing frames. Arrange mode starts automatically.
 5. In Arrange mode, drag or resize the selected frame. Cyan guides and a status label show when its center or edges align with the canvas or another frame. Click **Finish arrange** when done.
-6. Outside Arrange mode, drag directly inside a populated frame to reposition its photo and scroll over it to zoom. Double-click a frame for dedicated crop mode; the inspector also provides **Zoom** and **Rotation** sliders.
+6. Outside Arrange mode, drag directly inside a populated frame to reposition its photo and scroll over it to zoom. Double-click a frame to enter Arrange mode. Use **Crop selected** for the dedicated stationary-frame crop mode; the inspector also provides **Zoom** and **Rotation** sliders.
 7. Press `Escape` or **Finish crop** to leave crop mode. Each frame retains its own crop and adjustments.
 8. Use **Save** (or `Cmd/Ctrl+S`) to write a local project JSON file.
 9. Choose **Export PNG** to write the full 1080 × 1920 Story image.

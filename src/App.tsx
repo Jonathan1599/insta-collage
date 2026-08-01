@@ -564,7 +564,7 @@ function App() {
                   ? 'Drag frames · Resize with corner handles · Guides snap alignment'
                   : editor.cropMode
                     ? 'Drag to reposition · Scroll to zoom · Esc to finish'
-                    : 'Drag a photo to crop · Scroll to zoom'}
+                    : 'Double-click a frame to arrange · Drag a photo to crop'}
               </span>
             </div>
             <div className="flex items-center gap-2">
