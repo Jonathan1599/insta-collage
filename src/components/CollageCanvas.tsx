@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Canvas, FabricImage, Rect, filters } from 'fabric'
+import { Canvas, FabricImage, Line, Rect, filters } from 'fabric'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { constrainImageTransform, minimumCoverScale, nearlyEqual } from '../lib/canvasMath'
 import { useProjectStore } from '../store/projectStore'
@@ -94,6 +94,51 @@ const activePageFromState = () => {
 const frameFromPage = (page: ProjectPage, frameId: string) =>
   page.frames.find((frame) => frame.id === frameId)
 
+const SNAP_THRESHOLD = 18
+const MIN_FRAME_SIZE = 120
+
+interface SnapCandidate {
+  value: number
+  label: string
+  isCanvasCenter?: boolean
+  allowedAnchor?: 'start' | 'center' | 'end'
+}
+
+interface AxisSnap {
+  distance: number
+  start: number
+  guide: number
+  label: string
+}
+
+const findAxisSnap = (
+  start: number,
+  size: number,
+  candidates: SnapCandidate[],
+): AxisSnap | null => {
+  const anchors = [
+    { value: start, name: 'start' },
+    { value: start + size / 2, name: 'center' },
+    { value: start + size, name: 'end' },
+  ] as const
+  let best: AxisSnap | null = null
+  candidates.forEach((candidate) => {
+    anchors.forEach((anchor) => {
+      if (candidate.allowedAnchor && candidate.allowedAnchor !== anchor.name) return
+      const distance = Math.abs(candidate.value - anchor.value)
+      if (distance > SNAP_THRESHOLD || (best && distance >= best.distance)) return
+      const centered = candidate.isCanvasCenter && anchor.name === 'center'
+      best = {
+        distance,
+        start: start + candidate.value - anchor.value,
+        guide: candidate.value,
+        label: centered ? `Centered ${candidate.label}` : `Aligned ${candidate.label}`,
+      }
+    })
+  })
+  return best
+}
+
 export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>(
   function CollageCanvas({ onError }, forwardedRef) {
     const canvasElementRef = useRef<HTMLCanvasElement | null>(null)
@@ -105,13 +150,18 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
     const imageIdsByObjectRef = useRef(new Map<FabricImage, string>())
     const loadedSourcesRef = useRef(new Map<string, string>())
     const loadTokensRef = useRef(new Map<string, number>())
+    const directPanRef = useRef<{ frameId: string; x: number; y: number } | null>(null)
+    const verticalGuideRef = useRef<Line | null>(null)
+    const horizontalGuideRef = useRef<Line | null>(null)
     const [loadingFrameIds, setLoadingFrameIds] = useState<Set<string>>(new Set())
+    const [snapStatus, setSnapStatus] = useState<string | null>(null)
 
     const project = useProjectStore((state) => state.project)
     const editor = useProjectStore((state) => state.editor)
     const selectFrame = useProjectStore((state) => state.selectFrame)
     const setCropMode = useProjectStore((state) => state.setCropMode)
     const setLoadedImage = useProjectStore((state) => state.setLoadedImage)
+    const updateFrameGeometry = useProjectStore((state) => state.updateFrameGeometry)
     const updateImageTransform = useProjectStore((state) => state.updateImageTransform)
 
     const page = project.pages.find((candidate) => candidate.id === project.activePageId)
@@ -192,6 +242,25 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         preserveObjectStacking: true,
       })
       canvasRef.current = canvas
+      const verticalGuide = new Line([initialPage.width / 2, 0, initialPage.width / 2, initialPage.height], {
+        stroke: '#38bdf8',
+        strokeWidth: 3,
+        strokeDashArray: [14, 10],
+        selectable: false,
+        evented: false,
+        visible: false,
+      })
+      const horizontalGuide = new Line([0, initialPage.height / 2, initialPage.width, initialPage.height / 2], {
+        stroke: '#38bdf8',
+        strokeWidth: 3,
+        strokeDashArray: [14, 10],
+        selectable: false,
+        evented: false,
+        visible: false,
+      })
+      verticalGuideRef.current = verticalGuide
+      horizontalGuideRef.current = horizontalGuide
+      canvas.add(verticalGuide, horizontalGuide)
       const loadTokens = loadTokensRef.current
       const frameObjects = frameObjectsRef.current
       const frameIdsByObject = frameIdsByObjectRef.current
@@ -200,25 +269,159 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
       const imageIdsByObject = imageIdsByObjectRef.current
       const loadedSources = loadedSourcesRef.current
 
+      const hideSnapGuides = () => {
+        verticalGuide.set({ visible: false })
+        horizontalGuide.set({ visible: false })
+        setSnapStatus(null)
+      }
+
       canvas.on('mouse:down', (event) => {
         const overlay = event.target instanceof Rect ? event.target : null
         const frameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
         if (!frameId) return
         const state = useProjectStore.getState()
-        if (state.editor.selectedFrameId !== frameId) setCropMode(false)
+        if (state.editor.cropMode && state.editor.selectedFrameId !== frameId) setCropMode(false)
         selectFrame(frameId)
+        const currentFrame = frameFromPage(activePageFromState(), frameId)
+        if (
+          currentFrame?.image &&
+          !state.editor.arrangeMode &&
+          (!state.editor.cropMode || state.editor.selectedFrameId !== frameId)
+        ) {
+          directPanRef.current = {
+            frameId,
+            x: event.scenePoint.x,
+            y: event.scenePoint.y,
+          }
+        }
+      })
+
+      canvas.on('mouse:move', (event) => {
+        const pan = directPanRef.current
+        if (!pan) return
+        if ('buttons' in event.e && event.e.buttons === 0) {
+          directPanRef.current = null
+          return
+        }
+        const currentFrame = frameFromPage(activePageFromState(), pan.frameId)
+        const image = imageObjectsRef.current.get(pan.frameId)
+        if (!currentFrame?.image || !image) {
+          directPanRef.current = null
+          return
+        }
+
+        const safe = roundTransform(constrainImageTransform(
+          currentFrame,
+          currentFrame.image.naturalWidth,
+          currentFrame.image.naturalHeight,
+          {
+            ...currentFrame.image.transform,
+            offsetX: currentFrame.image.transform.offsetX + event.scenePoint.x - pan.x,
+            offsetY: currentFrame.image.transform.offsetY + event.scenePoint.y - pan.y,
+          },
+        ))
+        directPanRef.current = {
+          frameId: pan.frameId,
+          x: event.scenePoint.x,
+          y: event.scenePoint.y,
+        }
+        image.set({
+          left: currentFrame.x + currentFrame.width / 2 + safe.offsetX,
+          top: currentFrame.y + currentFrame.height / 2 + safe.offsetY,
+        })
+        image.setCoords()
+        updateImageTransform(currentFrame.id, safe)
+        canvas.requestRenderAll()
+      })
+
+      canvas.on('mouse:up', () => {
+        directPanRef.current = null
+        hideSnapGuides()
+        canvas.requestRenderAll()
       })
 
       canvas.on('mouse:dblclick', (event) => {
         const overlay = event.target instanceof Rect ? event.target : null
         const frameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
         if (!frameId) return
+        if (useProjectStore.getState().editor.arrangeMode) return
         const currentFrame = frameFromPage(activePageFromState(), frameId)
         selectFrame(frameId)
         if (currentFrame?.image) setCropMode(true)
       })
 
       canvas.on('object:moving', (event) => {
+        const overlay = event.target instanceof Rect ? event.target : null
+        const movingFrameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
+        const movingState = useProjectStore.getState()
+        if (overlay && movingFrameId && movingState.editor.arrangeMode) {
+          const currentPage = activePageFromState()
+          const currentFrame = frameFromPage(currentPage, movingFrameId)
+          if (!currentFrame) return
+          const width = overlay.width * (overlay.scaleX ?? 1)
+          const height = overlay.height * (overlay.scaleY ?? 1)
+          const otherFrames = currentPage.frames.filter((frame) => frame.id !== movingFrameId)
+          const xCandidates: SnapCandidate[] = [
+            { value: 0, label: 'to left edge', allowedAnchor: 'start' },
+            {
+              value: currentPage.width / 2,
+              label: 'horizontally',
+              isCanvasCenter: true,
+              allowedAnchor: 'center',
+            },
+            { value: currentPage.width, label: 'to right edge', allowedAnchor: 'end' },
+            ...otherFrames.flatMap((frame) => [
+              { value: frame.x, label: 'with another frame' },
+              { value: frame.x + frame.width / 2, label: 'with another frame' },
+              { value: frame.x + frame.width, label: 'with another frame' },
+            ]),
+          ]
+          const yCandidates: SnapCandidate[] = [
+            { value: 0, label: 'to top edge', allowedAnchor: 'start' },
+            {
+              value: currentPage.height / 2,
+              label: 'vertically',
+              isCanvasCenter: true,
+              allowedAnchor: 'center',
+            },
+            { value: currentPage.height, label: 'to bottom edge', allowedAnchor: 'end' },
+            ...otherFrames.flatMap((frame) => [
+              { value: frame.y, label: 'with another frame' },
+              { value: frame.y + frame.height / 2, label: 'with another frame' },
+              { value: frame.y + frame.height, label: 'with another frame' },
+            ]),
+          ]
+          const xSnap = findAxisSnap(overlay.left ?? currentFrame.x, width, xCandidates)
+          const ySnap = findAxisSnap(overlay.top ?? currentFrame.y, height, yCandidates)
+          const x = Math.min(Math.max(xSnap?.start ?? overlay.left ?? currentFrame.x, 0), currentPage.width - width)
+          const y = Math.min(Math.max(ySnap?.start ?? overlay.top ?? currentFrame.y, 0), currentPage.height - height)
+          overlay.set({ left: x, top: y })
+          overlay.setCoords()
+
+          if (xSnap) {
+            verticalGuide.set({
+              x1: xSnap.guide,
+              x2: xSnap.guide,
+              y1: 0,
+              y2: currentPage.height,
+              visible: true,
+            })
+          } else verticalGuide.set({ visible: false })
+          if (ySnap) {
+            horizontalGuide.set({
+              x1: 0,
+              x2: currentPage.width,
+              y1: ySnap.guide,
+              y2: ySnap.guide,
+              visible: true,
+            })
+          } else horizontalGuide.set({ visible: false })
+          setSnapStatus([xSnap?.label, ySnap?.label].filter(Boolean).join(' · ') || null)
+          updateFrameGeometry(movingFrameId, { x, y })
+          canvas.requestRenderAll()
+          return
+        }
+
         const image = event.target instanceof FabricImage ? event.target : null
         const frameId = image ? imageIdsByObjectRef.current.get(image) : undefined
         const state = useProjectStore.getState()
@@ -244,14 +447,52 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         updateImageTransform(frameId, safe)
       })
 
+      canvas.on('object:scaling', (event) => {
+        const overlay = event.target instanceof Rect ? event.target : null
+        const frameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
+        if (!overlay || !frameId || !useProjectStore.getState().editor.arrangeMode) return
+        const currentPage = activePageFromState()
+        const width = Math.min(
+          Math.max(overlay.width * (overlay.scaleX ?? 1), MIN_FRAME_SIZE),
+          currentPage.width,
+        )
+        const height = Math.min(
+          Math.max(overlay.height * (overlay.scaleY ?? 1), MIN_FRAME_SIZE),
+          currentPage.height,
+        )
+        const x = Math.min(Math.max(overlay.left ?? 0, 0), currentPage.width - width)
+        const y = Math.min(Math.max(overlay.top ?? 0, 0), currentPage.height - height)
+        overlay.set({ left: x, top: y, width, height, scaleX: 1, scaleY: 1 })
+        overlay.setCoords()
+        updateFrameGeometry(frameId, { x, y, width, height })
+        canvas.requestRenderAll()
+      })
+
+      canvas.on('object:modified', () => {
+        hideSnapGuides()
+        canvas.requestRenderAll()
+      })
+
       canvas.on('mouse:wheel', (event) => {
         if (!(event.e instanceof WheelEvent)) return
         const state = useProjectStore.getState()
-        if (!state.editor.cropMode) return
-        const currentFrame = frameFromPage(activePageFromState(), state.editor.selectedFrameId)
+        if (state.editor.arrangeMode) return
+        const overlayFrameId = event.target instanceof Rect
+          ? frameIdsByObjectRef.current.get(event.target)
+          : undefined
+        const imageFrameId = event.target instanceof FabricImage
+          ? imageIdsByObjectRef.current.get(event.target)
+          : undefined
+        const frameId = overlayFrameId ?? imageFrameId
+        if (!frameId) return
+        const currentFrame = frameFromPage(activePageFromState(), frameId)
         if (!currentFrame?.image) return
         event.e.preventDefault()
         event.e.stopPropagation()
+        if (state.editor.selectedFrameId !== frameId) {
+          setCropMode(false)
+          selectFrame(frameId)
+        }
 
         const minScale = minimumCoverScale(
           currentFrame,
@@ -282,10 +523,12 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         imageObjects.clear()
         imageIdsByObject.clear()
         loadedSources.clear()
+        verticalGuideRef.current = null
+        horizontalGuideRef.current = null
         canvasRef.current = null
         canvas.dispose()
       }
-    }, [selectFrame, setCropMode, updateImageTransform])
+    }, [selectFrame, setCropMode, updateFrameGeometry, updateImageTransform])
 
     useEffect(() => {
       const canvas = canvasRef.current
@@ -311,6 +554,9 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
 
       canvas.setDimensions({ width: currentPage.width, height: currentPage.height })
       canvas.backgroundColor = currentPage.backgroundColor
+      verticalGuideRef.current?.set({ y1: 0, y2: currentPage.height })
+      horizontalGuideRef.current?.set({ x1: 0, x2: currentPage.width })
+      const currentEditor = useProjectStore.getState().editor
       currentPage.frames.forEach((frame) => {
         let overlay = frameObjectsRef.current.get(frame.id)
         if (!overlay) {
@@ -319,8 +565,9 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           frameIdsByObjectRef.current.set(overlay, frame.id)
           canvas.add(overlay)
         }
-        const isSelected = frame.id === useProjectStore.getState().editor.selectedFrameId
-        const isCropping = isSelected && useProjectStore.getState().editor.cropMode
+        const isSelected = frame.id === currentEditor.selectedFrameId
+        const isCropping = isSelected && currentEditor.cropMode
+        const isArranging = currentEditor.arrangeMode
         overlay.set({
           left: frame.x,
           top: frame.y,
@@ -332,8 +579,16 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           strokeWidth: isSelected ? 5 : 2,
           selectable: !isCropping,
           evented: !isCropping,
+          hasControls: isArranging && isSelected,
+          hasBorders: isArranging && isSelected,
+          lockMovementX: !isArranging,
+          lockMovementY: !isArranging,
+          lockRotation: true,
           visible: true,
+          hoverCursor: isArranging ? 'move' : frame.image ? 'grab' : 'pointer',
+          moveCursor: isArranging ? 'move' : frame.image ? 'grabbing' : 'pointer',
         })
+        overlay.setControlsVisibility({ mtr: false })
         overlay.setCoords()
 
         let clipPath = clipPathsRef.current.get(frame.id)
@@ -369,7 +624,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
       if (state.editor.cropMode && selectedImage) canvas.setActiveObject(selectedImage)
       else if (selectedOverlay) canvas.setActiveObject(selectedOverlay)
       canvas.requestRenderAll()
-    }, [editor.cropMode, editor.selectedFrameId, frameGeometrySignature, page.backgroundColor, page.height, page.width])
+    }, [editor.arrangeMode, editor.cropMode, editor.selectedFrameId, frameGeometrySignature, page.backgroundColor, page.height, page.width])
 
     useEffect(() => {
       const canvas = canvasRef.current
@@ -554,6 +809,8 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         if (!canvas) throw new Error('The canvas is not ready yet.')
         const state = useProjectStore.getState()
         frameObjectsRef.current.forEach((overlay) => overlay.set({ visible: false }))
+        verticalGuideRef.current?.set({ visible: false })
+        horizontalGuideRef.current?.set({ visible: false })
         canvas.discardActiveObject()
         canvas.renderAll()
         try {
@@ -576,6 +833,16 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg bg-black/75 px-4 py-2 text-xs text-zinc-300">
             Loading {loadingFrameIds.size} photo{loadingFrameIds.size === 1 ? '' : 's'}…
           </div>
+        )}
+        {snapStatus && editor.arrangeMode && (
+          <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded bg-sky-400 px-2.5 py-1 text-[10px] font-semibold text-sky-950 shadow-lg">
+            {snapStatus}
+          </span>
+        )}
+        {editor.arrangeMode && !snapStatus && (
+          <span className="pointer-events-none absolute left-3 top-3 rounded bg-blue-500 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">
+            Arrange frames
+          </span>
         )}
         {editor.cropMode && selectedFrame.image && (
           <span className="pointer-events-none absolute left-3 top-3 rounded bg-amber-400 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-950">

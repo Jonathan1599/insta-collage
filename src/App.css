@@ -1,6 +1,6 @@
 .canvas-stage {
-  aspect-ratio: 4 / 5;
-  height: min(100%, calc((100vw - 620px) * 1.25));
+  aspect-ratio: 9 / 16;
+  height: min(100%, calc((100vw - 620px) * 1.7778));
   background: #18191b;
 }
 

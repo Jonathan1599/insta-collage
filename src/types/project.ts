@@ -9,6 +9,8 @@ export type CollageTemplateId =
   | 'three-columns'
   | 'hero-split'
   | 'four-grid'
+  | 'six-grid'
+  | 'eight-grid'
   | 'freeform'
 
 export interface ImageFilters {
@@ -117,11 +119,17 @@ export const createId = (prefix: string) => {
 export const createNewProject = (): CollageProject => {
   const timestamp = new Date().toISOString()
   const pageId = createId('page')
+  const defaultFrames: Array<Pick<CollageFrame, 'x' | 'y' | 'width' | 'height'>> = [
+    { x: 0, y: 0, width: 528, height: 948 },
+    { x: 552, y: 0, width: 528, height: 948 },
+    { x: 0, y: 972, width: 528, height: 948 },
+    { x: 552, y: 972, width: 528, height: 948 },
+  ]
 
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     id: createId('project'),
-    name: 'Untitled portrait',
+    name: 'Untitled Story',
     createdAt: timestamp,
     updatedAt: timestamp,
     activePageId: pageId,
@@ -129,34 +137,29 @@ export const createNewProject = (): CollageProject => {
       {
         id: pageId,
         name: 'Page 1',
-        templateId: 'single',
+        templateId: 'four-grid',
         width: 1080,
-        height: 1350,
+        height: 1920,
         backgroundColor: '#18191b',
         gap: 24,
-        frames: [
-          {
-            id: createId('frame'),
-            x: 54,
-            y: 54,
-            width: 972,
-            height: 1242,
-            cornerRadius: 0,
-            border: {
-              width: 0,
-              color: '#ffffff',
-            },
-            zIndex: 0,
-            image: null,
+        frames: defaultFrames.map((geometry, index) => ({
+          ...geometry,
+          id: createId('frame'),
+          cornerRadius: 0,
+          border: {
+            width: 0,
+            color: '#ffffff',
           },
-        ],
+          zIndex: index,
+          image: null,
+        })),
       },
     ],
     exportSettings: {
       format: 'png',
       jpegQuality: 0.92,
       width: 1080,
-      height: 1350,
+      height: 1920,
     },
   }
 }
@@ -231,6 +234,8 @@ const isPage = (value: unknown): value is ProjectPage => {
     'three-columns',
     'hero-split',
     'four-grid',
+    'six-grid',
+    'eight-grid',
     'freeform',
   ]
   return (

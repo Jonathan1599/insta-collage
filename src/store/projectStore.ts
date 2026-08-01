@@ -14,6 +14,7 @@ import {
 interface EditorState {
   selectedFrameId: string
   cropMode: boolean
+  arrangeMode: boolean
   projectPath: string | null
   dirty: boolean
   imageLoadRevisions: Record<string, number>
@@ -24,9 +25,15 @@ interface ProjectStore {
   editor: EditorState
   selectFrame: (frameId: string) => void
   setCropMode: (cropMode: boolean) => void
+  setArrangeMode: (arrangeMode: boolean) => void
   setBackgroundColor: (color: string) => void
   setFrameGap: (gap: number, frames: CollageFrame[]) => void
   setTemplateFrames: (templateId: CollageTemplateId, frames: CollageFrame[]) => void
+  addFrame: (frame: CollageFrame) => void
+  updateFrameGeometry: (
+    frameId: string,
+    geometry: Partial<Pick<CollageFrame, 'x' | 'y' | 'width' | 'height'>>,
+  ) => void
   assignImages: (assignments: Array<{ frameId: string; sourcePath: string }>) => void
   chooseImage: (frameId: string, sourcePath: string) => void
   setLoadedImage: (
@@ -69,6 +76,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   editor: {
     selectedFrameId: firstFrameId(freshProject),
     cropMode: false,
+    arrangeMode: false,
     projectPath: null,
     dirty: false,
     imageLoadRevisions: {},
@@ -76,7 +84,9 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   selectFrame: (selectedFrameId) =>
     set((state) => ({ editor: { ...state.editor, selectedFrameId } })),
   setCropMode: (cropMode) =>
-    set((state) => ({ editor: { ...state.editor, cropMode } })),
+    set((state) => ({ editor: { ...state.editor, cropMode, arrangeMode: false } })),
+  setArrangeMode: (arrangeMode) =>
+    set((state) => ({ editor: { ...state.editor, arrangeMode, cropMode: false } })),
   setBackgroundColor: (backgroundColor) =>
     set((state) => ({
       project: {
@@ -112,8 +122,45 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         ...state.editor,
         selectedFrameId: frames[0].id,
         cropMode: false,
+        arrangeMode: false,
         dirty: true,
       },
+    })),
+  addFrame: (frame) =>
+    set((state) => ({
+      project: {
+        ...state.project,
+        updatedAt: new Date().toISOString(),
+        pages: state.project.pages.map((page) => (
+          page.id === state.project.activePageId
+            ? { ...page, templateId: 'freeform', frames: [...page.frames, frame] }
+            : page
+        )),
+      },
+      editor: {
+        ...state.editor,
+        selectedFrameId: frame.id,
+        cropMode: false,
+        arrangeMode: true,
+        dirty: true,
+      },
+    })),
+  updateFrameGeometry: (frameId, geometry) =>
+    set((state) => ({
+      project: {
+        ...state.project,
+        updatedAt: new Date().toISOString(),
+        pages: state.project.pages.map((page) => ({
+          ...page,
+          templateId: page.frames.some((frame) => frame.id === frameId)
+            ? 'freeform'
+            : page.templateId,
+          frames: page.frames.map((frame) => (
+            frame.id === frameId ? { ...frame, ...geometry } : frame
+          )),
+        })),
+      },
+      editor: { ...state.editor, dirty: true },
     })),
   assignImages: (assignments) =>
     set((state) => {
@@ -215,6 +262,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         editor: {
           selectedFrameId: firstFrameId(project),
           cropMode: false,
+          arrangeMode: false,
           projectPath: null,
           dirty: false,
           imageLoadRevisions: {},
@@ -227,6 +275,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       editor: {
         selectedFrameId: firstFrameId(project),
         cropMode: false,
+        arrangeMode: false,
         projectPath,
         dirty: false,
         imageLoadRevisions: Object.fromEntries(

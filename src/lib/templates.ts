@@ -12,7 +12,7 @@ export interface TemplateDefinition {
   frames: Array<{ x: number; y: number; width: number; height: number }>
 }
 
-export const TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
+const LEGACY_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
   {
     id: 'single',
     name: 'Single',
@@ -52,15 +52,38 @@ export const TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       { x: 0.64, y: 0.5, width: 0.36, height: 0.5 },
     ],
   },
+]
+
+export const TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
   {
     id: 'four-grid',
-    name: '4 grid',
+    name: '4 frames',
     frames: [
       { x: 0, y: 0, width: 0.5, height: 0.5 },
       { x: 0.5, y: 0, width: 0.5, height: 0.5 },
       { x: 0, y: 0.5, width: 0.5, height: 0.5 },
       { x: 0.5, y: 0.5, width: 0.5, height: 0.5 },
     ],
+  },
+  {
+    id: 'six-grid',
+    name: '6 frames',
+    frames: Array.from({ length: 6 }, (_, index) => ({
+      x: (index % 2) * 0.5,
+      y: Math.floor(index / 2) / 3,
+      width: 0.5,
+      height: 1 / 3,
+    })),
+  },
+  {
+    id: 'eight-grid',
+    name: '8 frames',
+    frames: Array.from({ length: 8 }, (_, index) => ({
+      x: (index % 2) * 0.5,
+      y: Math.floor(index / 2) / 4,
+      width: 0.5,
+      height: 0.25,
+    })),
   },
   {
     id: 'freeform',
@@ -73,8 +96,10 @@ export const TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
   },
 ]
 
+const ALL_TEMPLATE_DEFINITIONS = [...LEGACY_TEMPLATE_DEFINITIONS, ...TEMPLATE_DEFINITIONS]
+
 const templateById = (templateId: CollageTemplateId) => (
-  TEMPLATE_DEFINITIONS.find((template) => template.id === templateId) ?? TEMPLATE_DEFINITIONS[0]
+  ALL_TEMPLATE_DEFINITIONS.find((template) => template.id === templateId) ?? TEMPLATE_DEFINITIONS[0]
 )
 
 export const createTemplateFrames = (
@@ -82,10 +107,9 @@ export const createTemplateFrames = (
   page: Pick<ProjectPage, 'width' | 'height' | 'gap' | 'frames'>,
 ): CollageFrame[] => {
   const template = templateById(templateId)
-  const margin = 54
   const gap = templateId === 'single' ? 0 : page.gap
-  const contentWidth = page.width - margin * 2
-  const contentHeight = page.height - margin * 2
+  const contentWidth = page.width
+  const contentHeight = page.height
   const previousImages = page.frames
     .slice()
     .sort((left, right) => left.zIndex - right.zIndex)
@@ -100,8 +124,8 @@ export const createTemplateFrames = (
 
     return {
       id: createId('frame'),
-      x: margin + definition.x * contentWidth + leftInset,
-      y: margin + definition.y * contentHeight + topInset,
+      x: definition.x * contentWidth + leftInset,
+      y: definition.y * contentHeight + topInset,
       width: definition.width * contentWidth - leftInset - rightInset,
       height: definition.height * contentHeight - topInset - bottomInset,
       cornerRadius: 0,
@@ -115,8 +139,10 @@ export const createTemplateFrames = (
 export const resizeFramesForGap = (
   page: Pick<ProjectPage, 'templateId' | 'width' | 'height' | 'gap' | 'frames'>,
   gap: number,
-) => createTemplateFrames(page.templateId, { ...page, gap }).map((frame, index) => ({
-  ...frame,
-  id: page.frames[index]?.id ?? frame.id,
-  image: page.frames[index]?.image ?? frame.image,
-}))
+) => page.templateId === 'freeform'
+  ? page.frames
+  : createTemplateFrames(page.templateId, { ...page, gap }).map((frame, index) => ({
+      ...frame,
+      id: page.frames[index]?.id ?? frame.id,
+      image: page.frames[index]?.image ?? frame.image,
+    }))

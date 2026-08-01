@@ -6,8 +6,10 @@ import { constrainImageTransform, minimumCoverScale } from './lib/canvasMath'
 import { createTemplateFrames, resizeFramesForGap, TEMPLATE_DEFINITIONS } from './lib/templates'
 import { useProjectStore } from './store/projectStore'
 import {
+  createId,
   createDefaultTransform,
   parseProjectFile,
+  type CollageFrame,
   type CollageTemplateId,
   type ImageFilters,
   type ImageTransform,
@@ -139,9 +141,11 @@ function App() {
   const editor = useProjectStore((state) => state.editor)
   const selectFrame = useProjectStore((state) => state.selectFrame)
   const setCropMode = useProjectStore((state) => state.setCropMode)
+  const setArrangeMode = useProjectStore((state) => state.setArrangeMode)
   const setBackgroundColor = useProjectStore((state) => state.setBackgroundColor)
   const setFrameGap = useProjectStore((state) => state.setFrameGap)
   const setTemplateFrames = useProjectStore((state) => state.setTemplateFrames)
+  const addFrame = useProjectStore((state) => state.addFrame)
   const assignImages = useProjectStore((state) => state.assignImages)
   const chooseImage = useProjectStore((state) => state.chooseImage)
   const updateImageTransform = useProjectStore((state) => state.updateImageTransform)
@@ -199,13 +203,16 @@ function App() {
       const existingCount = currentPage.frames.filter((frame) => frame.image).length
       const requestedCount = existingCount + paths.length
 
-      // Make the first multi-photo action immediately useful by choosing a fitting layout.
-      if (currentPage.frames.length === 1 && requestedCount > 1) {
-        const automaticTemplate: CollageTemplateId = requestedCount === 2
-          ? 'two-columns'
-          : requestedCount === 3
-            ? 'three-columns'
-            : 'four-grid'
+      // Expand Story grids when the current layout cannot hold the selected photos.
+      if (
+        currentPage.templateId !== 'freeform' &&
+        requestedCount > currentPage.frames.length
+      ) {
+        const automaticTemplate: CollageTemplateId = requestedCount <= 4
+          ? 'four-grid'
+          : requestedCount <= 6
+            ? 'six-grid'
+            : 'eight-grid'
         setTemplateFrames(automaticTemplate, createTemplateFrames(automaticTemplate, currentPage))
         currentPage = useProjectStore.getState().project.pages.find(
           (candidate) => candidate.id === useProjectStore.getState().project.activePageId,
@@ -246,6 +253,27 @@ function App() {
     } catch (error) {
       showError(error)
     }
+  }
+
+  const handleAddFrame = () => {
+    const width = Math.min(360, page.width - 108)
+    const height = Math.min(540, page.height - 108)
+    const frame: CollageFrame = {
+      id: createId('frame'),
+      x: (page.width - width) / 2,
+      y: (page.height - height) / 2,
+      width,
+      height,
+      cornerRadius: 0,
+      border: { width: 0, color: '#ffffff' },
+      zIndex: Math.max(-1, ...page.frames.map((candidate) => candidate.zIndex)) + 1,
+      image: null,
+    }
+    addFrame(frame)
+    setNotice({
+      kind: 'success',
+      message: 'Centered frame added. Drag or resize it, then place a photo inside.',
+    })
   }
 
   const handleSaveProject = useCallback(async () => {
@@ -409,6 +437,30 @@ function App() {
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">Layouts</h2>
               <span className="text-[10px] text-zinc-600">{page.frames.length} frames</span>
             </div>
+            <label className="mb-3 block rounded-md border border-white/[0.07] bg-zinc-900/40 p-2.5">
+              <span className="mb-2 flex items-center justify-between text-[11px] text-zinc-400">
+                <span>Photo gap</span>
+                <span className="font-mono text-[10px] text-blue-300">{Math.round(page.gap)} px</span>
+              </span>
+              <input
+                className="editor-range w-full"
+                type="range"
+                value={page.gap}
+                min={0}
+                max={80}
+                step={2}
+                disabled={page.templateId === 'freeform'}
+                onChange={(event) => {
+                  const gap = Number(event.target.value)
+                  setFrameGap(gap, resizeFramesForGap(page, gap))
+                }}
+              />
+              {page.templateId === 'freeform' && (
+                <span className="mt-1.5 block text-[9px] leading-snug text-zinc-600">
+                  Freeform spacing is controlled by moving each frame.
+                </span>
+              )}
+            </label>
             <div className="grid grid-cols-2 gap-2">
               {TEMPLATE_DEFINITIONS.map((template) => (
                 <button
@@ -436,6 +488,9 @@ function App() {
             <button className="primary-button w-full justify-center" type="button" onClick={() => void handleAddPhotos()}>
               <Icon name="add-photo" /> Add multiple photos
             </button>
+            <button className="secondary-button mt-2 w-full justify-center" type="button" onClick={handleAddFrame}>
+              <span className="text-base leading-none">＋</span> Add custom frame
+            </button>
 
             <div className="mt-3 space-y-2">
               {page.frames.map((candidate, index) => {
@@ -451,7 +506,7 @@ function App() {
                     key={candidate.id}
                     type="button"
                     onClick={() => {
-                      setCropMode(false)
+                      if (!editor.arrangeMode) setCropMode(false)
                       selectFrame(candidate.id)
                     }}
                   >
@@ -486,6 +541,17 @@ function App() {
           <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#1b1c1f] px-4">
             <div className="flex items-center gap-2">
               <button
+                className={`toolbar-button ${editor.arrangeMode ? 'border-blue-400/30 bg-blue-500/10 text-blue-300' : ''}`}
+                type="button"
+                onClick={() => setArrangeMode(!editor.arrangeMode)}
+              >
+                <span className="text-base leading-none">⌗</span>
+                {editor.arrangeMode ? 'Finish arrange' : 'Arrange frames'}
+              </button>
+              <button className="toolbar-button" type="button" onClick={handleAddFrame}>
+                <span className="text-base leading-none">＋</span> Frame
+              </button>
+              <button
                 className={`toolbar-button ${editor.cropMode ? 'toolbar-button-active' : ''}`}
                 type="button"
                 disabled={!selectedImage}
@@ -494,7 +560,11 @@ function App() {
                 <Icon name="crop" /> {editor.cropMode ? 'Finish crop' : 'Crop selected'}
               </button>
               <span className="hidden text-[11px] text-zinc-600 xl:inline">
-                {editor.cropMode ? 'Drag to reposition · Scroll to zoom · Esc to finish' : 'Click a frame to select · Double-click to crop'}
+                {editor.arrangeMode
+                  ? 'Drag frames · Resize with corner handles · Guides snap alignment'
+                  : editor.cropMode
+                    ? 'Drag to reposition · Scroll to zoom · Esc to finish'
+                    : 'Drag a photo to crop · Scroll to zoom'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -511,7 +581,7 @@ function App() {
           <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-7">
             <CollageCanvas ref={canvasRef} onError={showError} />
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md border border-white/[0.06] bg-[#1d1e21] px-2.5 py-1 text-[10px] text-zinc-500 shadow-md">
-              Portrait · 1080 × 1350 px · {placedPhotoCount} photo{placedPhotoCount === 1 ? '' : 's'}
+              Story · {page.width} × {page.height} px · {placedPhotoCount} photo{placedPhotoCount === 1 ? '' : 's'}
             </div>
           </div>
         </section>
@@ -553,8 +623,14 @@ function App() {
                 min={0}
                 max={80}
                 step={2}
+                disabled={page.templateId === 'freeform'}
                 onChange={(gap) => setFrameGap(gap, resizeFramesForGap(page, gap))}
               />
+              {page.templateId === 'freeform' && (
+                <p className="mt-2 text-[10px] leading-relaxed text-zinc-600">
+                  Use Arrange frames to control freeform spacing.
+                </p>
+              )}
             </section>
 
             <section className="inspector-section space-y-5">
