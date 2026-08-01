@@ -25,6 +25,15 @@ Photos are read from their existing local paths. The app never modifies the sour
 
 Folder browsing, thumbnail generation, carousel pages, and JPEG/custom-size export remain deferred to later milestones.
 
+## Download and run on macOS
+
+1. Open the [Collage Studio releases page](https://github.com/Jonathan1599/insta-collage/releases) and select the latest release.
+2. Download the `.dmg` file. The current `aarch64` build supports Apple Silicon Macs (M1, M2, M3, M4, and newer), not Intel Macs.
+3. Double-click the downloaded DMG, then drag **Collage Studio** into the **Applications** folder shown in the installer window.
+4. Eject the **Collage Studio** disk image and launch the app from your Applications folder.
+
+The current build is ad-hoc signed rather than Apple-notarized. On first launch, macOS may block it because the developer cannot be verified. Right-click **Collage Studio** in Applications and choose **Open**, or go to **System Settings → Privacy & Security** and choose **Open Anyway**. You only need to approve a particular build once.
+
 ## Prerequisites
 
 - Node.js 20 or newer
