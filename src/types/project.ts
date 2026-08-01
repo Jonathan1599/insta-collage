@@ -2,6 +2,15 @@ export const PROJECT_SCHEMA_VERSION = 1 as const
 
 export type ProjectImageFormat = 'png' | 'jpeg'
 
+export type CollageTemplateId =
+  | 'single'
+  | 'two-columns'
+  | 'two-rows'
+  | 'three-columns'
+  | 'hero-split'
+  | 'four-grid'
+  | 'freeform'
+
 export interface ImageFilters {
   brightness: number
   contrast: number
@@ -51,9 +60,11 @@ export interface CollageFrame {
 export interface ProjectPage {
   id: string
   name: string
+  templateId: CollageTemplateId
   width: number
   height: number
   backgroundColor: string
+  gap: number
   frames: CollageFrame[]
 }
 
@@ -96,7 +107,7 @@ export const createDefaultTransform = (): ImageTransform => ({
   opacity: 1,
 })
 
-const createId = (prefix: string) => {
+export const createId = (prefix: string) => {
   const suffix = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -118,9 +129,11 @@ export const createNewProject = (): CollageProject => {
       {
         id: pageId,
         name: 'Page 1',
+        templateId: 'single',
         width: 1080,
         height: 1350,
         backgroundColor: '#18191b',
+        gap: 24,
         frames: [
           {
             id: createId('frame'),
@@ -211,14 +224,25 @@ const isFrame = (value: unknown): value is CollageFrame => {
 
 const isPage = (value: unknown): value is ProjectPage => {
   if (!isRecord(value) || !Array.isArray(value.frames)) return false
+  const templateIds: CollageTemplateId[] = [
+    'single',
+    'two-columns',
+    'two-rows',
+    'three-columns',
+    'hero-split',
+    'four-grid',
+    'freeform',
+  ]
   return (
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
+    (value.templateId === undefined || templateIds.includes(value.templateId as CollageTemplateId)) &&
     isFiniteNumber(value.width) &&
     value.width > 0 &&
     isFiniteNumber(value.height) &&
     value.height > 0 &&
     typeof value.backgroundColor === 'string' &&
+    (value.gap === undefined || (isFiniteNumber(value.gap) && value.gap >= 0)) &&
     value.frames.length > 0 &&
     value.frames.every(isFrame)
   )
@@ -248,5 +272,11 @@ export const parseProjectFile = (value: unknown): CollageProject => {
     throw new Error('This project is damaged or uses an unsupported project version.')
   }
 
-  return structuredClone(value) as unknown as CollageProject
+  const project = structuredClone(value) as unknown as CollageProject
+  project.pages = project.pages.map((page) => ({
+    ...page,
+    templateId: page.templateId ?? 'freeform',
+    gap: page.gap ?? 24,
+  }))
+  return project
 }

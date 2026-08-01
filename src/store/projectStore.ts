@@ -4,6 +4,8 @@ import {
   createDefaultTransform,
   createNewProject,
   type CollageProject,
+  type CollageFrame,
+  type CollageTemplateId,
   type FrameImage,
   type ImageFilters,
   type ImageTransform,
@@ -14,7 +16,7 @@ interface EditorState {
   cropMode: boolean
   projectPath: string | null
   dirty: boolean
-  imageLoadRevision: number
+  imageLoadRevisions: Record<string, number>
 }
 
 interface ProjectStore {
@@ -23,6 +25,9 @@ interface ProjectStore {
   selectFrame: (frameId: string) => void
   setCropMode: (cropMode: boolean) => void
   setBackgroundColor: (color: string) => void
+  setFrameGap: (gap: number, frames: CollageFrame[]) => void
+  setTemplateFrames: (templateId: CollageTemplateId, frames: CollageFrame[]) => void
+  assignImages: (assignments: Array<{ frameId: string; sourcePath: string }>) => void
   chooseImage: (frameId: string, sourcePath: string) => void
   setLoadedImage: (
     frameId: string,
@@ -66,7 +71,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     cropMode: false,
     projectPath: null,
     dirty: false,
-    imageLoadRevision: 0,
+    imageLoadRevisions: {},
   },
   selectFrame: (selectedFrameId) =>
     set((state) => ({ editor: { ...state.editor, selectedFrameId } })),
@@ -83,21 +88,88 @@ export const useProjectStore = create<ProjectStore>((set) => ({
       },
       editor: { ...state.editor, dirty: true },
     })),
+  setFrameGap: (gap, frames) =>
+    set((state) => ({
+      project: {
+        ...state.project,
+        updatedAt: new Date().toISOString(),
+        pages: state.project.pages.map((page) => (
+          page.id === state.project.activePageId ? { ...page, gap, frames } : page
+        )),
+      },
+      editor: { ...state.editor, dirty: true },
+    })),
+  setTemplateFrames: (templateId, frames) =>
+    set((state) => ({
+      project: {
+        ...state.project,
+        updatedAt: new Date().toISOString(),
+        pages: state.project.pages.map((page) => (
+          page.id === state.project.activePageId ? { ...page, templateId, frames } : page
+        )),
+      },
+      editor: {
+        ...state.editor,
+        selectedFrameId: frames[0].id,
+        cropMode: false,
+        dirty: true,
+      },
+    })),
+  assignImages: (assignments) =>
+    set((state) => {
+      const pathsByFrame = new Map(assignments.map(({ frameId, sourcePath }) => [frameId, sourcePath]))
+      const nextRevisions = { ...state.editor.imageLoadRevisions }
+      assignments.forEach(({ frameId }) => {
+        nextRevisions[frameId] = (nextRevisions[frameId] ?? 0) + 1
+      })
+      return {
+        project: {
+          ...state.project,
+          updatedAt: new Date().toISOString(),
+          pages: state.project.pages.map((page) => ({
+            ...page,
+            frames: page.frames.map((frame) => {
+              const sourcePath = pathsByFrame.get(frame.id)
+              return sourcePath ? {
+                ...frame,
+                image: {
+                  sourcePath,
+                  naturalWidth: 0,
+                  naturalHeight: 0,
+                  transform: createDefaultTransform(),
+                  filters: createDefaultFilters(),
+                },
+              } : frame
+            }),
+          })),
+        },
+        editor: {
+          ...state.editor,
+          selectedFrameId: assignments[0]?.frameId ?? state.editor.selectedFrameId,
+          cropMode: false,
+          dirty: true,
+          imageLoadRevisions: nextRevisions,
+        },
+      }
+    }),
   chooseImage: (frameId, sourcePath) =>
     set((state) => ({
-      project: updateFrame(state.project, frameId, () => ({
+      project: updateFrame(state.project, frameId, (currentImage) => ({
         sourcePath,
         naturalWidth: 0,
         naturalHeight: 0,
-        transform: createDefaultTransform(),
-        filters: createDefaultFilters(),
+        transform: currentImage?.transform ?? createDefaultTransform(),
+        filters: currentImage?.filters ?? createDefaultFilters(),
       })),
       editor: {
         ...state.editor,
         selectedFrameId: frameId,
         cropMode: false,
         dirty: true,
-        imageLoadRevision: state.editor.imageLoadRevision + 1,
+        imageLoadRevisions: {
+          ...state.editor.imageLoadRevisions,
+          [frameId]: (state.editor.imageLoadRevisions[frameId] ?? 0) + 1,
+        },
       },
     })),
   setLoadedImage: (frameId, naturalWidth, naturalHeight, transform) =>
@@ -145,19 +217,21 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           cropMode: false,
           projectPath: null,
           dirty: false,
-          imageLoadRevision: 0,
+          imageLoadRevisions: {},
         },
       }
     }),
   loadProject: (project, projectPath) =>
-    set((state) => ({
+    set(() => ({
       project,
       editor: {
         selectedFrameId: firstFrameId(project),
         cropMode: false,
         projectPath,
         dirty: false,
-        imageLoadRevision: state.editor.imageLoadRevision + 1,
+        imageLoadRevisions: Object.fromEntries(
+          project.pages.flatMap((page) => page.frames.map((frame) => [frame.id, 1])),
+        ),
       },
     })),
   markSaved: (projectPath) =>
