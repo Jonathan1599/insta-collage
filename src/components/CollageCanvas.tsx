@@ -188,6 +188,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
     const loadTokensRef = useRef(new Map<string, number>())
     const directPanRef = useRef<{ frameId: string; x: number; y: number } | null>(null)
     const pendingFrameSelectionRef = useRef<string | null>(null)
+    const wheelHistoryTimerRef = useRef<number | null>(null)
     const verticalGuideRef = useRef<Line | null>(null)
     const horizontalGuideRef = useRef<Line | null>(null)
     const [loadingFrameIds, setLoadingFrameIds] = useState<Set<string>>(new Set())
@@ -202,6 +203,8 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
     const updateFrameGeometry = useProjectStore((state) => state.updateFrameGeometry)
     const swapFrameGeometry = useProjectStore((state) => state.swapFrameGeometry)
     const updateImageTransform = useProjectStore((state) => state.updateImageTransform)
+    const beginHistoryTransaction = useProjectStore((state) => state.beginHistoryTransaction)
+    const endHistoryTransaction = useProjectStore((state) => state.endHistoryTransaction)
 
     const page = project.pages.find((candidate) => candidate.id === project.activePageId)
       ?? project.pages[0]
@@ -315,10 +318,21 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
       }
 
       canvas.on('mouse:down', (event) => {
+        const state = useProjectStore.getState()
+        const image = event.target instanceof FabricImage ? event.target : null
+        const imageFrameId = image ? imageIdsByObjectRef.current.get(image) : undefined
+        if (
+          imageFrameId &&
+          state.editor.cropMode &&
+          state.editor.selectedFrameId === imageFrameId
+        ) {
+          beginHistoryTransaction()
+        }
+
         const overlay = event.target instanceof Rect ? event.target : null
         const frameId = overlay ? frameIdsByObjectRef.current.get(overlay) : undefined
         if (!frameId) return
-        const state = useProjectStore.getState()
+        if (state.editor.arrangeMode) beginHistoryTransaction()
         if (state.editor.cropMode && state.editor.selectedFrameId !== frameId) setCropMode(false)
         if (state.editor.arrangeMode && state.editor.selectedFrameId !== frameId) {
           pendingFrameSelectionRef.current = frameId
@@ -331,6 +345,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           !state.editor.arrangeMode &&
           (!state.editor.cropMode || state.editor.selectedFrameId !== frameId)
         ) {
+          beginHistoryTransaction()
           directPanRef.current = {
             frameId,
             x: event.scenePoint.x,
@@ -379,6 +394,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
 
       canvas.on('mouse:up', () => {
         directPanRef.current = null
+        endHistoryTransaction()
         const pendingFrameId = pendingFrameSelectionRef.current
         pendingFrameSelectionRef.current = null
         if (pendingFrameId) selectFrame(pendingFrameId)
@@ -644,10 +660,21 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
           currentFrame.image.naturalHeight,
           { ...currentFrame.image.transform, scale },
         ))
+        if (wheelHistoryTimerRef.current === null) beginHistoryTransaction()
+        else window.clearTimeout(wheelHistoryTimerRef.current)
+        wheelHistoryTimerRef.current = window.setTimeout(() => {
+          wheelHistoryTimerRef.current = null
+          endHistoryTransaction()
+        }, 250)
         updateImageTransform(currentFrame.id, safe)
       })
 
       return () => {
+        if (wheelHistoryTimerRef.current !== null) {
+          window.clearTimeout(wheelHistoryTimerRef.current)
+          wheelHistoryTimerRef.current = null
+          endHistoryTransaction()
+        }
         loadTokens.forEach((token, frameId) => loadTokens.set(frameId, token + 1))
         imageObjects.forEach((image) => image.dispose())
         frameObjects.clear()
@@ -661,7 +688,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         canvasRef.current = null
         canvas.dispose()
       }
-    }, [selectFrame, setArrangeMode, setCropMode, swapFrameGeometry, updateFrameGeometry, updateImageTransform])
+    }, [beginHistoryTransaction, endHistoryTransaction, selectFrame, setArrangeMode, setCropMode, swapFrameGeometry, updateFrameGeometry, updateImageTransform])
 
     useEffect(() => {
       const canvas = canvasRef.current
@@ -913,7 +940,7 @@ export const CollageCanvas = forwardRef<CollageCanvasHandle, CollageCanvasProps>
         })
         image.setCoords()
         if (!transformsMatch(safe, frame.image.transform)) {
-          updateImageTransform(frame.id, roundTransform(safe))
+          updateImageTransform(frame.id, roundTransform(safe), { recordHistory: false })
         }
       })
       canvas.requestRenderAll()

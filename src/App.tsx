@@ -23,8 +23,10 @@ type IconName =
   | 'export'
   | 'folder'
   | 'image'
+  | 'redo'
   | 'reset'
   | 'save'
+  | 'undo'
 
 type Notice = {
   kind: 'success' | 'error'
@@ -39,8 +41,10 @@ const Icon = ({ name, className = 'h-4 w-4' }: { name: IconName; className?: str
     export: <><path d="M8 11V2" /><path d="m4.5 5.5 3.5-3.5 3.5 3.5" /><path d="M3 9.5v4A1.5 1.5 0 0 0 4.5 15h7A1.5 1.5 0 0 0 13 13.5v-4" /></>,
     folder: <path d="M2.5 5A1.5 1.5 0 0 1 4 3.5h3l1.5 1.7H14A1.5 1.5 0 0 1 15.5 6.7v5.8A1.5 1.5 0 0 1 14 14H4a1.5 1.5 0 0 1-1.5-1.5Z" />,
     image: <><rect x="2.5" y="3" width="13" height="11" rx="1.5" /><circle cx="6.3" cy="6.7" r="1.2" /><path d="m3 12 3.3-3.3a1 1 0 0 1 1.4 0l1.8 1.8 1.1-1.1a1 1 0 0 1 1.4 0l3 3" /></>,
+    redo: <><path d="m12 5 3 3-3 3" /><path d="M15 8H8a4 4 0 0 0-4 4v1" /></>,
     reset: <><path d="M3 5v4h4" /><path d="M4.2 11.6A6 6 0 1 0 3 8.7" /></>,
     save: <><path d="M3 2.5h9l2 2v10H3z" /><path d="M5.5 2.5v4h5v-4M5.5 14v-4.5h6V14" /></>,
+    undo: <><path d="m6 5-3 3 3 3" /><path d="M3 8h7a4 4 0 0 1 4 4v1" /></>,
   }
 
   return (
@@ -61,6 +65,17 @@ interface RangeControlProps {
   onChange: (value: number) => void
 }
 
+const rangeInteractionKeys = new Set([
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'ArrowUp',
+  'End',
+  'Home',
+  'PageDown',
+  'PageUp',
+])
+
 const RangeControl = ({
   label,
   value,
@@ -70,26 +85,41 @@ const RangeControl = ({
   step,
   disabled,
   onChange,
-}: RangeControlProps) => (
-  <label className={`block ${disabled ? 'opacity-40' : ''}`}>
-    <span className="mb-2 flex items-center justify-between text-xs text-zinc-400">
-      <span>{label}</span>
-      <span className="min-w-12 rounded bg-zinc-800 px-1.5 py-0.5 text-right font-mono text-[11px] text-zinc-300">
-        {displayValue}
+}: RangeControlProps) => {
+  const beginHistoryTransaction = useProjectStore((state) => state.beginHistoryTransaction)
+  const endHistoryTransaction = useProjectStore((state) => state.endHistoryTransaction)
+
+  return (
+    <label className={`block ${disabled ? 'opacity-40' : ''}`}>
+      <span className="mb-2 flex items-center justify-between text-xs text-zinc-400">
+        <span>{label}</span>
+        <span className="min-w-12 rounded bg-zinc-800 px-1.5 py-0.5 text-right font-mono text-[11px] text-zinc-300">
+          {displayValue}
+        </span>
       </span>
-    </span>
-    <input
-      className="editor-range w-full"
-      type="range"
-      value={value}
-      min={min}
-      max={max}
-      step={step}
-      disabled={disabled}
-      onChange={(event) => onChange(Number(event.target.value))}
-    />
-  </label>
-)
+      <input
+        className="editor-range w-full"
+        type="range"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        onPointerDown={beginHistoryTransaction}
+        onPointerUp={endHistoryTransaction}
+        onPointerCancel={endHistoryTransaction}
+        onKeyDown={(event) => {
+          if (rangeInteractionKeys.has(event.key)) beginHistoryTransaction()
+        }}
+        onKeyUp={(event) => {
+          if (rangeInteractionKeys.has(event.key)) endHistoryTransaction()
+        }}
+        onBlur={endHistoryTransaction}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  )
+}
 
 const TemplatePreview = ({ templateId }: { templateId: CollageTemplateId }) => {
   const template = TEMPLATE_DEFINITIONS.find((candidate) => candidate.id === templateId)
@@ -154,6 +184,12 @@ function App() {
   const resetProject = useProjectStore((state) => state.resetProject)
   const loadProject = useProjectStore((state) => state.loadProject)
   const markSaved = useProjectStore((state) => state.markSaved)
+  const beginHistoryTransaction = useProjectStore((state) => state.beginHistoryTransaction)
+  const endHistoryTransaction = useProjectStore((state) => state.endHistoryTransaction)
+  const undo = useProjectStore((state) => state.undo)
+  const redo = useProjectStore((state) => state.redo)
+  const canUndo = useProjectStore((state) => state.history.past.length > 0)
+  const canRedo = useProjectStore((state) => state.history.future.length > 0)
 
   const page = project.pages.find((candidate) => candidate.id === project.activePageId)
     ?? project.pages[0]
@@ -197,45 +233,50 @@ function App() {
       const paths = Array.isArray(selected) ? selected : typeof selected === 'string' ? [selected] : []
       if (paths.length === 0) return
 
-      let currentPage = useProjectStore.getState().project.pages.find(
-        (candidate) => candidate.id === useProjectStore.getState().project.activePageId,
-      ) ?? useProjectStore.getState().project.pages[0]
-      const existingCount = currentPage.frames.filter((frame) => frame.image).length
-      const requestedCount = existingCount + paths.length
-
-      // Expand Story grids when the current layout cannot hold the selected photos.
-      if (
-        currentPage.templateId !== 'freeform' &&
-        requestedCount > currentPage.frames.length
-      ) {
-        const automaticTemplate: CollageTemplateId = requestedCount <= 4
-          ? 'four-grid'
-          : requestedCount <= 6
-            ? 'six-grid'
-            : 'eight-grid'
-        setTemplateFrames(automaticTemplate, createTemplateFrames(automaticTemplate, currentPage))
-        currentPage = useProjectStore.getState().project.pages.find(
+      beginHistoryTransaction()
+      try {
+        let currentPage = useProjectStore.getState().project.pages.find(
           (candidate) => candidate.id === useProjectStore.getState().project.activePageId,
         ) ?? useProjectStore.getState().project.pages[0]
-      }
+        const existingCount = currentPage.frames.filter((frame) => frame.image).length
+        const requestedCount = existingCount + paths.length
 
-      const emptyFrames = currentPage.frames.filter((frame) => !frame.image)
-      const assignments = paths.slice(0, emptyFrames.length).map((sourcePath, index) => ({
-        frameId: emptyFrames[index].id,
-        sourcePath,
-      }))
-      if (assignments.length === 0) {
-        setNotice({ kind: 'error', message: 'This layout is full. Select a larger layout or replace a selected frame.' })
-        return
+        // Expand Story grids when the current layout cannot hold the selected photos.
+        if (
+          currentPage.templateId !== 'freeform' &&
+          requestedCount > currentPage.frames.length
+        ) {
+          const automaticTemplate: CollageTemplateId = requestedCount <= 4
+            ? 'four-grid'
+            : requestedCount <= 6
+              ? 'six-grid'
+              : 'eight-grid'
+          setTemplateFrames(automaticTemplate, createTemplateFrames(automaticTemplate, currentPage))
+          currentPage = useProjectStore.getState().project.pages.find(
+            (candidate) => candidate.id === useProjectStore.getState().project.activePageId,
+          ) ?? useProjectStore.getState().project.pages[0]
+        }
+
+        const emptyFrames = currentPage.frames.filter((frame) => !frame.image)
+        const assignments = paths.slice(0, emptyFrames.length).map((sourcePath, index) => ({
+          frameId: emptyFrames[index].id,
+          sourcePath,
+        }))
+        if (assignments.length === 0) {
+          setNotice({ kind: 'error', message: 'This layout is full. Select a larger layout or replace a selected frame.' })
+          return
+        }
+        assignImages(assignments)
+        const skipped = paths.length - assignments.length
+        setNotice({
+          kind: skipped > 0 ? 'error' : 'success',
+          message: skipped > 0
+            ? `Added ${assignments.length} photos. ${skipped} did not fit in this layout.`
+            : `Added ${assignments.length} photo${assignments.length === 1 ? '' : 's'} to the collage.`,
+        })
+      } finally {
+        endHistoryTransaction()
       }
-      assignImages(assignments)
-      const skipped = paths.length - assignments.length
-      setNotice({
-        kind: skipped > 0 ? 'error' : 'success',
-        message: skipped > 0
-          ? `Added ${assignments.length} photos. ${skipped} did not fit in this layout.`
-          : `Added ${assignments.length} photo${assignments.length === 1 ? '' : 's'} to the collage.`,
-      })
     } catch (error) {
       showError(error)
     }
@@ -370,14 +411,23 @@ function App() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      const modifier = event.metaKey || event.ctrlKey
+      const key = event.key.toLowerCase()
+      if (modifier && key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+      } else if (modifier && key === 'y') {
+        event.preventDefault()
+        redo()
+      } else if (modifier && key === 's') {
         event.preventDefault()
         void handleSaveProject()
       }
     }
     window.addEventListener('keydown', handleShortcut)
     return () => window.removeEventListener('keydown', handleShortcut)
-  }, [handleSaveProject])
+  }, [handleSaveProject, redo, undo])
 
   const minScale = selectedImage ? minimumCoverScale(
     selectedFrame,
@@ -430,6 +480,14 @@ function App() {
                 <Icon name="save" /> Save
               </button>
             </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button className="secondary-button" type="button" disabled={!canUndo} onClick={undo} title="Undo (Cmd/Ctrl+Z)">
+                <Icon name="undo" /> Undo
+              </button>
+              <button className="secondary-button" type="button" disabled={!canRedo} onClick={redo} title="Redo (Cmd/Ctrl+Shift+Z)">
+                <Icon name="redo" /> Redo
+              </button>
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
@@ -450,6 +508,16 @@ function App() {
                 max={80}
                 step={2}
                 disabled={page.templateId === 'freeform'}
+                onPointerDown={beginHistoryTransaction}
+                onPointerUp={endHistoryTransaction}
+                onPointerCancel={endHistoryTransaction}
+                onKeyDown={(event) => {
+                  if (rangeInteractionKeys.has(event.key)) beginHistoryTransaction()
+                }}
+                onKeyUp={(event) => {
+                  if (rangeInteractionKeys.has(event.key)) endHistoryTransaction()
+                }}
+                onBlur={endHistoryTransaction}
                 onChange={(event) => {
                   const gap = Number(event.target.value)
                   setFrameGap(gap, resizeFramesForGap(page, gap))
@@ -611,6 +679,8 @@ function App() {
                     className="h-6 w-7 cursor-pointer rounded border-0 bg-transparent p-0"
                     type="color"
                     value={page.backgroundColor}
+                    onFocus={beginHistoryTransaction}
+                    onBlur={endHistoryTransaction}
                     onChange={(event) => setBackgroundColor(event.target.value)}
                   />
                   {page.backgroundColor.toUpperCase()}

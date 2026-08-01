@@ -19,10 +19,11 @@ Photos are read from their existing local paths. The app never modifies the sour
 - Rotation with automatic cover constraints (no exposed frame areas)
 - Brightness, contrast, and saturation adjustments
 - Per-frame photo replacement, selected-image reset, and complete-project reset
+- 100-step undo/redo history with `Cmd/Ctrl+Z` and `Cmd/Ctrl+Shift+Z` shortcuts
 - Serializable `.json` project save/open with source paths, frame geometry, transforms, filters, and export settings
 - 1080 × 1920 PNG export, independent of the displayed editor size
 
-Folder browsing, thumbnail generation, carousel pages, undo/redo, and JPEG/custom-size export remain deferred to later milestones.
+Folder browsing, thumbnail generation, carousel pages, and JPEG/custom-size export remain deferred to later milestones.
 
 ## Prerequisites
 
@@ -62,8 +63,9 @@ npm run tauri build
 5. In Arrange mode, drag or resize the selected frame. Cyan guides and a status label show when its center or edges align with the canvas or another frame. Click **Finish arrange** when done.
 6. Outside Arrange mode, drag directly inside a populated frame to reposition its photo and scroll over it to zoom. Double-click a frame to enter Arrange mode. Use **Crop selected** for the dedicated stationary-frame crop mode; the inspector also provides **Zoom** and **Rotation** sliders.
 7. Press `Escape` or **Finish crop** to leave crop mode. Each frame retains its own crop and adjustments.
-8. Use **Save** (or `Cmd/Ctrl+S`) to write a local project JSON file.
-9. Choose **Export PNG** to write the full 1080 × 1920 Story image.
+8. Use **Undo** / **Redo**, `Cmd/Ctrl+Z`, or `Cmd/Ctrl+Shift+Z` to move through project edits.
+9. Use **Save** (or `Cmd/Ctrl+S`) to write a local project JSON file.
+10. Choose **Export PNG** to write the full 1080 × 1920 Story image.
 
 Saved projects reference the original image path, so keep the source photo in place if you want the project to reopen without relinking it.
 
