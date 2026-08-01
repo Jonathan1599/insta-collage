@@ -1,6 +1,6 @@
 [package]
 name = "collage-studio"
-version = "0.1.0"
+version = "1.0.0"
 description = "A local-first Instagram collage editor"
 authors = ["Collage Studio"]
 license = "PolyForm-Noncommercial-1.0.0"

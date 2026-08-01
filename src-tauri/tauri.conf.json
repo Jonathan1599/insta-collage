@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Collage Studio",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.collagestudio.desktop",
   "build": {
     "frontendDist": "../dist",
