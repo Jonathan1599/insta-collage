@@ -4,12 +4,14 @@ A local-first Tauri desktop editor for creating Instagram Story collages COZ I C
 
 Photos are read from their existing local paths. The app never modifies the source files, has no backend, and makes no network requests.
 
+![Collage Studio demo](docs/assets/collage-studio-demo.gif)
+
 ## Current features
 
 - Native multi-photo JPEG, PNG, and WebP picker
 - Story-first layouts for 4, 6, or 8 photos, plus freeform
 - Edge-to-edge Story grids with adjustable spacing only between collage photos
-- Custom frames that can be moved and resized on top of any starting layout
+- Custom frames that can be moved and resized without disabling the starting layout's gap control
 - Smart snapping to the canvas center, margins, and other frame edges or centers
 - Separate Fabric.js frame, clip path, transform, and filter state for every photo
 - Click-to-select and double-click crop mode with drag-to-reposition
@@ -54,7 +56,7 @@ npm run tauri build
 ## How to use
 
 1. Choose the **4 frames**, **6 frames**, **8 frames**, or **Freeform** Story layout.
-2. Use **Photo gap** in the left sidebar (or **Gap between photos** in the inspector) to adjust grid spacing. Custom/freeform frames are positioned individually, so the grid gap control is disabled there.
+2. Use **Photo gap** in the left sidebar (or **Gap between photos** in the inspector) to adjust grid spacing. Added custom frames keep their individual position while the underlying grid gap changes. A true Freeform layout is positioned manually.
 3. Click **Add multiple photos** and choose images. A grid automatically expands from 4 to 6 or 8 frames when needed.
 4. Click **Add custom frame** or **+ Frame** to add a centered frame without discarding the existing frames. Arrange mode starts automatically.
 5. In Arrange mode, drag or resize the selected frame. Cyan guides and a status label show when its center or edges align with the canvas or another frame. Click **Finish arrange** when done.

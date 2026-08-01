@@ -139,10 +139,19 @@ export const createTemplateFrames = (
 export const resizeFramesForGap = (
   page: Pick<ProjectPage, 'templateId' | 'width' | 'height' | 'gap' | 'frames'>,
   gap: number,
-) => page.templateId === 'freeform'
-  ? page.frames
-  : createTemplateFrames(page.templateId, { ...page, gap }).map((frame, index) => ({
+) => {
+  if (page.templateId === 'freeform') return page.frames
+
+  const templateFrameCount = templateById(page.templateId).frames.length
+  const resizedTemplateFrames = createTemplateFrames(page.templateId, { ...page, gap })
+    .map((frame, index) => ({
       ...frame,
       id: page.frames[index]?.id ?? frame.id,
       image: page.frames[index]?.image ?? frame.image,
     }))
+
+  return [
+    ...resizedTemplateFrames,
+    ...page.frames.slice(templateFrameCount),
+  ]
+}

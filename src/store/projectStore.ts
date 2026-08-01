@@ -133,7 +133,7 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         updatedAt: new Date().toISOString(),
         pages: state.project.pages.map((page) => (
           page.id === state.project.activePageId
-            ? { ...page, templateId: 'freeform', frames: [...page.frames, frame] }
+            ? { ...page, frames: [...page.frames, frame] }
             : page
         )),
       },
@@ -152,9 +152,6 @@ export const useProjectStore = create<ProjectStore>((set) => ({
         updatedAt: new Date().toISOString(),
         pages: state.project.pages.map((page) => ({
           ...page,
-          templateId: page.frames.some((frame) => frame.id === frameId)
-            ? 'freeform'
-            : page.templateId,
           frames: page.frames.map((frame) => (
             frame.id === frameId ? { ...frame, ...geometry } : frame
           )),
