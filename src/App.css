@@ -1,0 +1,65 @@
+.canvas-stage {
+  aspect-ratio: 4 / 5;
+  height: min(100%, calc((100vw - 610px) * 1.25));
+  background: #18191b;
+}
+
+.canvas-stage .canvas-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.canvas-stage .canvas-container canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.editor-range {
+  height: 16px;
+  cursor: pointer;
+  appearance: none;
+  background: transparent;
+}
+
+.editor-range:focus {
+  outline: none;
+}
+
+.editor-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #3f3f46;
+}
+
+.editor-range::-webkit-slider-thumb {
+  width: 13px;
+  height: 13px;
+  margin-top: -5px;
+  appearance: none;
+  border: 2px solid #60a5fa;
+  border-radius: 999px;
+  background: #18181b;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 40%);
+}
+
+.editor-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 25%);
+}
+
+.editor-range:disabled {
+  cursor: not-allowed;
+}
+
+.editor-range::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #3f3f46;
+}
+
+.editor-range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #60a5fa;
+  border-radius: 999px;
+  background: #18181b;
+}
