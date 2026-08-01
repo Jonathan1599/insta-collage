@@ -1,6 +1,6 @@
 # Collage Studio
 
-A local-first Tauri desktop editor for creating Instagram photo collages. This repository currently contains the first incremental milestone: one 1080 × 1350 portrait canvas, one independent frame, nondestructive crop controls, three image adjustments, project save/open, reset controls, and full-resolution PNG export.
+A local-first Tauri desktop editor for creating Instagram photo collages COZ I COUNLDN'T FIND AN EXISTING SIMPLE APP! Currently supports one 1080 × 1350 portrait canvas, one independent frame, nondestructive crop controls, three image adjustments, project save/open, reset controls, and full-resolution PNG export.
 
 Photos are read from their existing local paths. The app never modifies the source files, has no backend, and makes no network requests.
 
